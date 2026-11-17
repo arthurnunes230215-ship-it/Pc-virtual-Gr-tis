@@ -1,0 +1,65 @@
+
+name: Virtual PC Online
+
+on:
+  workflow_dispatch:
+    inputs:
+      access_password:
+        description: 'Defina uma senha de até 8 caracteres'
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360 # Até 6 horas
+
+    steps:
+      - name: Checkout Repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Senha do Utilizador
+        env:
+          PASS: ${{ github.event.inputs.access_password }}
+        run: |
+          echo "::add-mask::$PASS"
+          if [ -z "$PASS" ] || [ "${#PASS}" -gt 8 ]; then
+            echo "::error::A senha deve ter até 8 caracteres"
+            exit 1
+          fi
+          echo "runner:$PASS" | sudo chpasswd
+          sudo usermod -aG sudo runner
+
+      - name: Instalar Servidor de Área de Trabalho e Ferramentas
+        run: |
+          sudo apt update
+          sudo apt install -y xfce4 xfce4-goodies tigervnc-standalone-server tigervnc-common dbus-x11 jq
+
+      - name: Instalar o Ngrok
+        uses: ngrok/ngrok-action@v1
+        with:
+          auth-token: ${{ secrets.NGROK_AUTHTOKEN }}
+
+      - name: Iniciar Servidor VNC
+        env:
+          PASS: ${{ github.event.inputs.access_password }}
+        run: |
+          echo "::add-mask::$PASS"
+          mkdir -p ~/.vnc
+          echo "$PASS" | vncpasswd -f > ~/.vnc/passwd
+          chmod 600 ~/.vnc/passwd
+          printf '#!/bin/sh\nunset SESSION_MANAGER\nunset DBUS_SESSION_BUS_ADDRESS\nexec startxfce4\n' > ~/.vnc/xstartup
+          chmod +x ~/.vnc/xstartup
+          vncserver :1 -geometry 1280x720 -depth 24
+          echo "VNC iniciado na porta 5901"
+
+      - name: Expor Porta via Ngrok (TCP)
+        run: |
+          ngrok tcp 5901 --log=stdout > ngrok.log &
+          sleep 8
+          echo "Endereço: $(curl -s localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')"
+
+      - name: Manter Máquina Ativa
+        run: |
+          echo "PC virtual pronto! Use um cliente VNC (como o RealVNC ou TigerVNC) para ligar."
+          sleep infinity
+          
